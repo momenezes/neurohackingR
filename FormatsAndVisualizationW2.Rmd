@@ -1,0 +1,450 @@
+---
+title: "Neuroimaging: Formats and Visualization - week 2"
+author: "Mário O. de Menezes"
+date: "07/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/datasets/Neurohacking_data-0.2/")
+```
+
+```{r}
+library(oro.dicom)
+```
+
+# DICOM Files
+
+## Loading one slice of DICOM image set
+
+```{r}
+slice <- readDICOM("BRAINIX/DICOM/FLAIR/IM-0001-0011.dcm")
+```
+```{r}
+class(slice)
+```
+```{r}
+names(slice)
+```
+```{r}
+class(slice$hdr)
+```
+```{r}
+class(slice$hdr[[1]])
+```
+```{r}
+class(slice$img)
+```
+```{r}
+class(slice$img[[1]])
+```
+```{r}
+dim(slice$img[[1]])
+```
+```{r out.width='4cm', out.height='4cm'}
+d <- dim(t(slice$img[[1]]))
+image(1:d[1], 1:d[2], t(slice$img[[1]]), col = gray(0:64/64))
+```
+
+```{r}
+slice$img[[1]][101:105,121:125]
+```
+
+```{r}
+hist(slice$img[[1]][,],breaks = 50, xlab = "FLAIR", prob=T, col=rgb(0,0,1,1/4), main = "")
+```
+
+## DICOM Header Information
+
+```{r}
+hdr <- slice$hdr[[1]]
+names(hdr)
+```
+
+
+```{r}
+hdr$name
+```
+
+```{r}
+# resolution of image (in mm)
+# dimension of each pixel
+hdr[hdr$name == "PixelSpacing", "value"]
+```
+
+```{r}
+# image acquisition parameter
+# put in the experimental method of a paper
+hdr[hdr$name == "FlipAngle",]
+```
+
+## Loading multiple DICOM Files
+
+
+```{r}
+slice_T1 = readDICOM("BRAINIX/DICOM/T1/IM-0001-0007.dcm")
+```
+
+```{r}
+all_slices_T1 <- readDICOM("BRAINIX/DICOM/T1/")
+```
+
+```{r}
+dim(all_slices_T1$img[[11]])
+```
+```{r}
+hdr <- all_slices_T1$hdr[[11]]
+```
+```{r}
+# higher resolution, smaller pixel dimensions
+hdr[hdr$name == "PixelSpacing","value"]
+```
+
+
+# NIfTI Format
+
+## From DICOM to NIfTI
+
+```{r}
+nii_T1 <- dicom2nifti(all_slices_T1)
+```
+```{r}
+d <- dim(nii_T1); d; class(nii_T1)
+```
+```{r}
+image(1:d[1], 1:d[2], nii_T1[,,11], col=gray(0:64/64), xlab = "", ylab = "")
+```
+
+## Write and Read NIfTI Files
+
+
+```{r}
+library(oro.nifti)
+```
+
+```{r}
+fname = "Output_3D_File"
+writeNIfTI(nii_T1, filename=paste0("BRAINIX/NIfTI/",fname))
+list.files("BRAINIX/NIfTI/", pattern = "Output_3D_File")
+```
+
+```{r}
+list.files("BRAINIX/NIfTI/", pattern = "T")
+```
+
+```{r}
+nii_T2 <- readNIfTI("BRAINIX/NIfTI/T2.nii.gz", reorient = FALSE)
+dim(nii_T2)
+```
+
+
+# Basic Visualization
+
+```{r}
+library(oro.nifti)
+```
+
+```{r}
+
+fname <- "BRAINIX/NIfTI/Output_3D_File"
+nii_T1 <- readNIfTI(fname=fname)
+print(nii_T1)
+d <- dim(nii_T1)
+```
+
+```{r}
+image(1:d[1],1:d[2], nii_T1[,,11],xlab = "", ylab = "")
+```
+
+A função `graphics::image` usa como default `heat.colors(12)`, ou seja, um mapa de cores onde valores baixos dos pixels são mapeados em cores mais quentes (vermelho) e valores altos dos pixeis são mapeados em cores mais claras (amarelo).
+As cores podem ser resetadas usando `col=gray(0:64/64)`.
+
+O pacote `oro.nifti` tem uma função `image` que é mais esperta ao plotar objetos do tipo `nii`. Embora pareça a mesma função, o **R** vai saber que estamos chamando a função `oro.nifti::image` -- é uma resolução do tipo polimorfismo em linguagens orientadas a objeto.
+
+```{r}
+image(nii_T1, z = 11, plot.type = "single")
+```
+
+Se não usamos o argumento `plot.type = single`, a função `image` vai plotar todos os slices no eixo _axial_ (default).
+
+```{r}
+image(nii_T1)
+```
+
+Visualização Ortográfica -- todos os planos: Coronal, Sagital e Axial.
+
+```{r}
+orthographic(nii_T1, xyz = c(200,220,11))
+```
+
+
+## Extracting data from images
+
+### Histograms
+
+```{r}
+par(mfrow = c(1,2))
+o <- par(mar=c(4,4,0,0))
+hist(nii_T1, breaks = 75, prob = T, xlab = "T1 intensities", col = rgb(0,0,1,1/2), main = "")
+hist(nii_T1[nii_T1 > 20], breaks = 75, prob = T, xlab = "T1 intensities > 20", col = rgb(0,0,1,1/2), main = "")
+```
+
+
+Como temos muitos pixels com intensidade 0 (preto), a visualização pode ficar comprometida. Uma alternativa é diminuir a faixa dinâmica dos valores dos pixels. Por exemplo, setar pixels com valores acima de 100 todos iguais a 100, se nosso interesse é na região de valores abaixo. Com isso teremos uma faixa dinâmica menor e a visualização ficará melhor nessa faixa.
+
+### Backmapping One Slice
+
+Vamos criar uma máscara para sobrepor na imagem e visualizar uma região de pixels de interesse. 
+Selecionamos apenas pixels com valores entre 300 e 400.
+
+```{r}
+is_btw_300_400 <- ((nii_T1 > 300) & (nii_T1 < 400))
+nii_T1_mask <- nii_T1
+nii_T1_mask[!is_btw_300_400] <- NA
+overlay(nii_T1,nii_T1_mask, z = 11, plot.type = "single")
+```
+
+Esta grande área vermelha corresponde à "white matter" no cérebro!
+
+
+
+```{r}
+overlay(nii_T1,nii_T1_mask)
+```
+
+Top left corner: bottom of the brain; and starts going up as you move left to right.
+
+
+Na visão ortográfica fica interessante também, sem a sobreposição.
+
+```{r}
+orthographic(nii_T1, nii_T1_mask, xyz = c(200,220,11), text = "Image overlaid with mask", text.cex = 1.5)
+```
+
+
+# Basic Data Manipulation
+
+### Reading Data
+
+```{r}
+mridir <- "kirby21/visit_1/113/"
+```
+
+```{r}
+T1 <- readNIfTI(file.path(mridir,"113-01-MPRAGE.nii.gz"), reorient = FALSE)
+```
+
+```{r}
+orthographic(T1)
+```
+
+Esta é uma imagem bem extensa da cabeça, indo até o pescoço; é diferente da imagem anterior, que parava na base da cabeça.
+
+**Carregando uma máscara**
+
+É uma imagem binária, que será utilizada como máscara, isto é, para selecionar, sobrepor na imagem original. Representa áreas do cérebro que estamos interessados.
+
+```{r}
+mask <- readNIfTI(file.path(mridir, "113-01-MPRAGE_mask.nii.gz"), reorient = FALSE)
+orthographic(mask)
+```
+
+
+Aplicadno a máscara: multiplicação.
+
+Só vai restar o que for 1 na máscara!
+
+```{r}
+masked.T1 <- T1*mask
+orthographic(masked.T1)
+```
+
+
+Loading the follow-up T1-w image from the Kirby21 data. 
+
+_Os caminhos dos arquivos estão um pouco diferente do que aparece nos slides; provavelmente houve uma reorganização mas não mexeram nas aulas_.
+
+```{r}
+mridir2 <- "kirby21/visit_2/113/"
+```
+
+```{r}
+T1.follow <- readNIfTI(file.path(mridir2, "113-02-MPRAGE.nii.gz"), reorient = FALSE)
+```
+
+Subtraindo o baseline T1-w scan do follow-up T1-w scan:
+
+```{r}
+subtract.T1 <- T1.follow - T1
+min(subtract.T1)
+max(subtract.T1)
+```
+
+```{r}
+orthographic(subtract.T1)
+```
+
+
+# Transformations and Smoothing
+
+
+## Log-Scale Histogram
+
+```{r}
+im_hist <- hist(T1, plot = FALSE)
+par(mar = c(5,4,4,4) + 0.3)
+col1 = rgb(0,0,1,1/2)
+plot(im_hist$mids, im_hist$count, log = "y", type = 'h', lwd= 10, lend = 2, col = col1, xlab = "Intensity Values", ylab = "Count (Log Scale)")
+```
+
+## Log-Scale Histogram with Linear Transfer Function
+
+```{r}
+par(mar = c(5,4,4,4) + 0.3)
+col1 = rgb(0,0,1,1/2)
+plot(im_hist$mids, im_hist$count, log = "y", type = 'h', lwd= 10, lend = 2, col = col1, xlab = "Intensity Values", ylab = "Count (Log Scale)")
+par(new = TRUE)
+curve(x*1, axes = FALSE, xlab = "", ylab = "", col = 2, lwd = 3)
+axis(side = 4, at = pretty(range(im_hist$mids))/max(T1), labels = pretty(range(im_hist$mids)))
+mtext("Original Intensity", side = 4, line = 2)
+```
+
+
+## Define a different transfer function
+
+Let's define a linear spline. Other definitions are possible
+
+```{r}
+lin.sp <- function(x, knots, slope) {
+  knots <- c(min(x), knots, max(x))
+  slopeS <- slope[1]
+  for (j in 2:length(slope)){
+    slopeS <- c(slopeS, slope[j] - sum(slopeS))
+  }
+  rvals <- numeric(length(x))
+  for (i in 2:length(knots)) {
+    rvals <- ifelse(x >= knots[i-1], slopeS[i-1]*(x - knots[i-1]) + rvals, rvals)
+  }
+  return(rvals)
+}
+
+# Define a spline with two knots and three slopes
+knot.vals <- c(.3, .6)
+slp.vals <- c(1, .5, .25)
+```
+
+
+## Plot the spline transfer function
+
+```{r}
+par(mar = c(5,4,4,4) + 0.3)
+col1 = rgb(0,0,1,1/2)
+plot(im_hist$mids, im_hist$count, log = "y", type = 'h', lwd= 10, lend = 2, col = col1, xlab = "Intensity Values", ylab = "Count (Log Scale)")
+par(new = TRUE)
+curve(lin.sp(x, knot.vals, slp.vals), axes = FALSE, xlab = "", ylab = "", col = 2, lwd = 3)
+axis(side = 4, at = pretty(range(im_hist$mids))/max(T1), labels = pretty(range(im_hist$mids)))
+mtext("Transformed Intensity", side = 4, line = 2)
+```
+
+
+## Aplicando efetivamente as transformações
+
+```{r}
+par(mfrow = c(1,2))
+trans_T1 <- lin.sp(T1, knot.vals*max(T1), slp.vals)
+image(T1, z=150, plot.type="single", main = "Original Image")
+image(trans_T1, z = 150, plot.type = "single", main = "Transformed Image")
+```
+
+
+## Smoothing
+
+`AnalyzeFMRI::GaussSmoothArray` -- apply a Gaussian smooth to the image
+
+Smooth the image with a Gaussian smoother (~ 1 minute)
+
+```{r}
+library(AnalyzeFMRI)
+```
+
+```{r}
+smooth.T1 <- GaussSmoothArray(T1, voxdim = c(1,1,1), ksize = 11, sigma = diag(3,3), mask = NULL, var.norm = FALSE)
+```
+
+```{r}
+orthographic(smooth.T1)
+```
+
+
+
+# Basic MRI Contrasts
+
+## Multi-sequence structural MRI
+
+**Fluid-attenuated inversion recovery (FLAIR)**
+
+```{r}
+mridir <- "BRAINIX/NIfTI/"
+sequence <- "FLAIR"
+```
+
+```{r}
+volume.f <- readNIfTI(file.path(mridir, paste0(sequence,".nii.gz")), reorient = FALSE)
+```
+
+```{r}
+volume.f <- cal_img(volume.f)
+```
+
+
+Axial slice
+
+```{r}
+image(volume.f, z = 12, plot.type = "single")
+```
+
+
+**T1-weighted (T1)**
+
+```{r}
+sequence <- "T1"
+```
+
+```{r}
+volume.t1 <- readNIfTI(file.path(mridir, paste0(sequence,".nii.gz")), reorient = FALSE)
+volume.t1 <- cal_img(volume.t1)
+```
+
+```{r}
+image(volume.t1, z= 12, plot.type = "single")
+```
+
+
+**T2-weighted (T2)**
+
+```{r}
+sequence <- "T2"
+```
+
+```{r}
+volume.t2 <- readNIfTI(file.path(mridir, paste0(sequence,".nii.gz")), reorient = FALSE)
+volume.t2 <- cal_img(volume.t2)
+```
+
+```{r}
+image(volume.t2, z= 12, plot.type = "single")
+```
+
+
+
+Data Structure
+
+$$Y_m(v)$$
+where:
+* $m$ is the contrast (*FLAIR, T2, PD, T2*);
+* $v$ is the voxel (with $x,y,z$ coordinates).
+
+
+
+
